@@ -1,4 +1,4 @@
-# Laboratory Work 4
+# Laboratory Work 5
 ## Formal Languages & Finite Automata
 
 **Topic:** Chomsky Normal Form  
