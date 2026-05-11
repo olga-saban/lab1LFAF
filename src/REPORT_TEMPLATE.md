@@ -10,154 +10,115 @@
 
 Regular expressions are formal tools used to describe patterns in strings. They are widely used in computer science for tasks such as lexical analysis, pattern matching, and validation of input data. A regular expression defines a set of strings over a given alphabet using operations such as concatenation, alternation, and repetition.
 
-The most common operators in regular expressions include union, denoted by the symbol "|", which allows choosing between multiple symbols, concatenation which joins symbols together, and repetition operators such as "*" (zero or more repetitions), "+" (one or more repetitions), and "^n" (exact repetition). These operators allow the construction of complex patterns from simple building blocks.
+The most common operators in regular expressions include union, denoted by the symbol "|", which allows choosing between multiple symbols, concatenation which joins symbols together, and repetition operators such as "*" (zero or more repetitions), "+" (one or more repetitions), and "{n}" (exact repetition). These operators allow the construction of complex patterns from simple building blocks.
 
-Regular expressions are equivalent in expressive power to finite automata and regular grammars. They describe exactly the class of regular languages.
+Regular expressions are equivalent in expressive power to finite automata and regular grammars. They describe exactly the class of regular languages. To process them programmatically, a pattern can be parsed into an Abstract Syntax Tree (AST) whose nodes represent the structural operations of the expression.
 
 ---
 
 ## Objectives
 
-The objective of this laboratory work was to understand how regular expressions generate strings and how their structure influences the resulting language. Another goal was to implement algorithms that generate all possible strings defined by given regular expressions. The laboratory also aimed to simulate repetition operators and alternatives using programming constructs and to display the generated results.
+The objective of this laboratory work was to understand how regular expressions generate strings and how their structure influences the resulting language. Another goal was to implement a recursive-descent parser that builds an AST from a pattern string. The laboratory also aimed to generate all possible strings defined by given regular expressions through AST traversal and to display the parsing steps alongside the generated results.
 
 ---
 
 ## Implementation Description
 
-The project was implemented in Java and consists of a single class called `RegexGenerator`. This class contains methods for generating strings based on three different regular expressions and for explaining the generation process.
+The project was implemented in Java and consists of a single class called `RegexGenerator`. Rather than hardcoding generation logic per expression, it uses a recursive-descent parser that builds an AST from any pattern string and generates strings by traversing that tree.
 
-A constant `MAX_REPEAT` is used to limit the number of repetitions for operators such as "*" and "+", ensuring that the generated output remains finite and manageable.
+A constant `MAX_REPEAT` is used to limit the number of repetitions for operators such as `*` and `+`, ensuring that the generated output remains finite and manageable.
 
 ```java
 static final int MAX_REPEAT = 5;
 ```
 
-The `main` method controls the execution of the program. It sequentially processes each regular expression by displaying an explanation of the steps involved and then generating and printing the corresponding strings.
+The `main` method iterates over all three regular expressions. For each one it creates a `RegexParser`, parses the pattern into an AST, prints the recorded parsing steps, and then generates and prints up to 50 strings.
 
 ```java
-public static void main(String[] args) {
+for (String regex : regexes) {
+    System.out.println("\nREGEX: " + regex);
+    RegexParser parser = new RegexParser(regex);
+    Node ast = parser.parse();
 
-    System.out.println("REGEX 1");
-    explainR1();
-    List<String> r1 = generateR1();
-    printSample(r1);
+    System.out.println("\nProcessing steps:");
+    for (String step : parser.steps) {
+        System.out.println(step);
+    }
 
-    System.out.println("\nREGEX 2");
-    explainR2();
-    List<String> r2 = generateR2();
-    printSample(r2);
-
-    System.out.println("\nREGEX 3");
-    explainR3();
-    List<String> r3 = generateR3();
-    printSample(r3);
+    System.out.println("\nGenerated strings:");
+    List<String> results = ast.generate(MAX_REPEAT, 50);
+    for (String s : results) {
+        System.out.println(s);
+    }
 }
 ```
 
-The first regular expression has the form (S|T)(U|V)W*Y+24. The method `generateR1` constructs strings by iterating through all possible combinations of the alternatives and repetitions. Nested loops are used to simulate the behavior of the repetition operators "*" and "+".
+### AST Node Types
+
+All nodes implement the `Node` interface which exposes a single `generate(int maxRepeat, int maxResults)` method. Four concrete types are defined:
+
+- **Literal** – holds a single character and returns it as a one-element list.
+- **Concat** – holds an ordered list of child nodes and builds its output by progressively cross-producting each child's string list.
+- **Alternation** – holds multiple alternative child nodes and returns the union of all their outputs.
+- **Repeat** – wraps a child node with a minimum and maximum count. It generates strings for every count from `min` to `min(max, MAX_REPEAT)` by repeatedly concatenating the child's output with itself.
+
+String lists are combined using a helper that respects the `maxResults` cap:
 
 ```java
-static List<String> generateR1() {
+static List<String> concat(List<String> left, List<String> right, int maxResults) {
     List<String> result = new ArrayList<>();
-
-    char[] first = {'S', 'T'};
-    char[] second = {'U', 'V'};
-
-    for (char a : first) {
-        for (char b : second) {
-            for (int w = 0; w <= MAX_REPEAT; w++) {
-                for (int y = 1; y <= MAX_REPEAT; y++) {
-
-                    StringBuilder sb = new StringBuilder();
-                    sb.append(a).append(b);
-                    sb.append("W".repeat(w));
-                    sb.append("Y".repeat(y));
-                    sb.append("24");
-
-                    result.add(sb.toString());
-                }
-            }
+    for (String a : left) {
+        for (String b : right) {
+            result.add(a + b);
+            if (result.size() >= maxResults) return result;
         }
     }
     return result;
 }
 ```
 
-The second regular expression L(M|N)O^3P*Q(2|3) is implemented in the method `generateR2`. This method ensures that the symbol 'O' is repeated exactly three times while 'P' can appear any number of times within the defined limit.
+### Recursive-Descent Parser
+
+The `RegexParser` class walks the pattern string using three mutually recursive methods that mirror the grammar of regular expressions. Each method also appends a description of its action to the `steps` list.
+
+- `parseExpression()` handles alternation. It collects terms separated by `|` and wraps them in an `Alternation` node when there is more than one.
+- `parseTerm()` handles concatenation. It collects consecutive factors until it hits `)`, `|`, or end-of-input, and wraps them in a `Concat` node.
+- `parseFactor()` calls `parseBase()` then checks for a quantifier: `*` produces `Repeat(base, 0, MAX_REPEAT)`, `+` produces `Repeat(base, 1, MAX_REPEAT)`, and `{n}` produces `Repeat(base, n, n)`.
+- `parseBase()` consumes a literal character or, on encountering `(`, recursively calls `parseExpression()` and expects the closing `)`.
 
 ```java
-static List<String> generateR2() {
-    List<String> result = new ArrayList<>();
-
-    char[] mid = {'M', 'N'};
-    char[] last = {'2', '3'};
-
-    for (char m : mid) {
-        for (int p = 0; p <= MAX_REPEAT; p++) {
-            for (char l : last) {
-
-                StringBuilder sb = new StringBuilder();
-                sb.append("L");
-                sb.append(m);
-                sb.append("O".repeat(3));
-                sb.append("P".repeat(p));
-                sb.append("Q");
-                sb.append(l);
-
-                result.add(sb.toString());
-            }
-        }
+Node parseExpression() {
+    List<Node> options = new ArrayList<>();
+    options.add(parseTerm());
+    while (current() == '|') {
+        advance();
+        steps.add("Build alternation");
+        options.add(parseTerm());
     }
-    return result;
+    if (options.size() == 1) return options.get(0);
+    return new Alternation(options);
 }
 ```
 
-The third regular expression R*S(T|U|V)W(X|Y|Z)^2 is implemented in the method `generateR3`. This method generates all possible strings by combining repetitions of 'R', a single symbol from the middle group, and all combinations of two symbols from the set {X, Y, Z}.
+### Processed Regular Expressions
 
-```java
-static List<String> generateR3() {
-    List<String> result = new ArrayList<>();
+The three expressions exercise the full set of supported constructs:
 
-    char[] middle = {'T', 'U', 'V'};
-    char[] xyz = {'X', 'Y', 'Z'};
-
-    for (int r = 0; r <= MAX_REPEAT; r++) {
-        for (char m : middle) {
-            for (char x : xyz) {
-                for (char y : xyz) {
-
-                    StringBuilder sb = new StringBuilder();
-
-                    sb.append("R".repeat(r));
-                    sb.append("S");
-                    sb.append(m);
-                    sb.append("W");
-                    sb.append(x).append(y);
-
-                    result.add(sb.toString());
-                }
-            }
-        }
-    }
-    return result;
-}
-```
-
-Each regular expression also has a corresponding explanation method that prints the sequence of steps used to construct the strings. This helps clarify how each part of the regular expression contributes to the final result.
+1. `(S|T)(U|V)W*Y+24` — two alternation groups, a zero-or-more repeat, a one-or-more repeat, and literal digits.
+2. `L(M|N)O{3}P*Q(2|3)` — an exact-repeat quantifier `{3}`, a zero-or-more repeat, and an alternation containing digit literals.
+3. `R*S(T|U|V)W(X|Y|Z){2}` — a zero-or-more repeat at the start, a three-way alternation, and an exact-repeat `{2}` applied to another three-way alternation.
 
 ---
 
 ## Conclusions
 
-The laboratory work demonstrated how regular expressions can be translated into algorithms that generate strings. By using loops and combinatorial logic, it is possible to simulate the behavior of operators such as alternation and repetition.
+The laboratory work demonstrated how regular expressions can be parsed into an Abstract Syntax Tree and how that tree can be traversed recursively to enumerate all strings belonging to the described language. Using a recursive-descent parser instead of hardcoded loops makes the implementation general: the same code handles any combination of alternation, concatenation, and repetition without requiring expression-specific methods.
 
-The implementation shows that even though regular expressions are abstract mathematical constructs, they can be effectively implemented using standard programming techniques. The generated outputs confirm that the expressions were correctly interpreted and that all valid combinations were produced within the defined limits.
-
-This work also reinforces the connection between regular expressions and formal language theory, highlighting their practical application in software development.
+The parsing step log makes the internal structure of each expression visible, reinforcing the connection between the textual notation and the underlying tree. This work also illustrates the practical relationship between regular expressions, formal language theory, and tree-based algorithm design.
 
 ---
 
 ## References
 
 Course materials for Formal Languages & Finite Automata.  
-Java Documentation: https://docs.oracle.com/javase/  
+Java Documentation: https://docs.oracle.com/javase/

@@ -1,143 +1,229 @@
 import java.util.*;
 
 public class RegexGenerator {
-
     static final int MAX_REPEAT = 5;
 
     public static void main(String[] args) {
+        String[] regexes = {
+                "(S|T)(U|V)W*Y+24",
+                "L(M|N)O{3}P*Q(2|3)",
+                "R*S(T|U|V)W(X|Y|Z){2}"
+        };
 
-        System.out.println("REGEX 1");
-        explainR1();
-        List<String> r1 = generateR1();
-        printSample(r1);
+        for (String regex : regexes) {
+            System.out.println("\nREGEX: " + regex);
+            RegexParser parser = new RegexParser(regex);
+            Node ast = parser.parse();
 
-        System.out.println("\nREGEX 2");
-        explainR2();
-        List<String> r2 = generateR2();
-        printSample(r2);
+            System.out.println("\nProcessing steps:");
+            for (String step : parser.steps) {
+                System.out.println(step);
+            }
 
-        System.out.println("\nREGEX 3");
-        explainR3();
-        List<String> r3 = generateR3();
-        printSample(r3);
+            System.out.println("\nGenerated strings:");
+            List<String> results = ast.generate(MAX_REPEAT, 50);
+            for (String s : results) {
+                System.out.println(s);
+            }
+        }
     }
 
-    // (S|T)(U|V)W*Y+24
-    static List<String> generateR1() {
-        List<String> result = new ArrayList<>();
+    interface Node {
+        List<String> generate(int maxRepeat, int maxResults);
+    }
 
-        char[] first = {'S', 'T'};
-        char[] second = {'U', 'V'};
+    static class Literal implements Node {
+        String value;
 
-        for (char a : first) {
-            for (char b : second) {
-                for (int w = 0; w <= MAX_REPEAT; w++) {
-                    for (int y = 1; y <= MAX_REPEAT; y++) {
+        Literal(String value) {
+            this.value = value;
+        }
 
-                        StringBuilder sb = new StringBuilder();
-                        sb.append(a).append(b);
+        public List<String> generate(int maxRepeat, int maxResults) {
+            return List.of(value);
+        }
+    }
 
-                        sb.append("W".repeat(w));
-                        sb.append("Y".repeat(y));
+    static class Concat implements Node {
+        List<Node> parts;
 
-                        sb.append("24");
+        Concat(List<Node> parts) {
+            this.parts = parts;
+        }
 
-                        result.add(sb.toString());
-                    }
+        public List<String> generate(int maxRepeat, int maxResults) {
+            List<String> result = new ArrayList<>();
+            result.add("");
+
+            for (Node node : parts) {
+                List<String> next = node.generate(maxRepeat, maxResults);
+                result = concat(result, next, maxResults);
+            }
+            return result;
+        }
+    }
+
+    static class Alternation implements Node {
+        List<Node> options;
+
+        Alternation(List<Node> options) {
+            this.options = options;
+        }
+
+        public List<String> generate(int maxRepeat, int maxResults) {
+            List<String> result = new ArrayList<>();
+            for (Node node : options) {
+                result.addAll(node.generate(maxRepeat, maxResults));
+            }
+            return result;
+        }
+    }
+
+    static class Repeat implements Node {
+        Node child;
+        int min;
+        int max;
+
+        Repeat(Node child, int min, int max) {
+            this.child = child;
+            this.min = min;
+            this.max = max;
+        }
+
+        public List<String> generate(int maxRepeat, int maxResults) {
+            List<String> result = new ArrayList<>();
+            int limit = Math.min(max, maxRepeat);
+            List<String> base = child.generate(maxRepeat, maxResults);
+
+            for (int count = min; count <= limit; count++) {
+                List<String> current = new ArrayList<>();
+                current.add("");
+                for (int i = 0; i < count; i++) {
+                    current = concat(current, base, maxResults);
                 }
+                result.addAll(current);
+            }
+            return result;
+        }
+    }
+
+    static class RegexParser {
+        String pattern;
+        int pos = 0;
+        List<String> steps = new ArrayList<>();
+
+        RegexParser(String pattern) {
+            this.pattern = pattern;
+        }
+
+        Node parse() {
+            return parseExpression();
+        }
+
+        // expression -> term ('|' term)*
+        Node parseExpression() {
+            List<Node> options = new ArrayList<>();
+            options.add(parseTerm());
+
+            while (current() == '|') {
+                advance();
+                steps.add("Build alternation");
+                options.add(parseTerm());
+            }
+
+            if (options.size() == 1) return options.get(0);
+            return new Alternation(options);
+        }
+
+        // term -> factor+
+        Node parseTerm() {
+            List<Node> factors = new ArrayList<>();
+            while (current() != '\0' && current() != ')' && current() != '|') {
+                factors.add(parseFactor());
+            }
+
+            if (factors.size() == 1) return factors.get(0);
+            steps.add("Build concatenation");
+            return new Concat(factors);
+        }
+
+        // factor -> base (* + {m})
+        Node parseFactor() {
+            Node base = parseBase();
+
+            if (current() == '*') {
+                advance();
+                steps.add("Apply repeat *");
+                return new Repeat(base, 0, MAX_REPEAT);
+            }
+            if (current() == '+') {
+                advance();
+                steps.add("Apply repeat +");
+                return new Repeat(base, 1, MAX_REPEAT);
+            }
+            if (current() == '{') {
+                advance();
+                int number = readNumber();
+                expect('}');
+                steps.add("Apply repeat {" + number + "}");
+                return new Repeat(base, number, number);
+            }
+            return base;
+        }
+
+        // base -> literal | (expression)
+        Node parseBase() {
+            if (current() == '(') {
+                advance();
+                Node node = parseExpression();
+                expect(')');
+                steps.add("Close group");
+                return node;
+            }
+
+            char ch = current();
+            advance();
+            steps.add("Read literal '" + ch + "'");
+            return new Literal(String.valueOf(ch));
+        }
+
+        // =========================
+        // HELPERS
+        // =========================
+        char current() {
+            return (pos >= pattern.length()) ? '\0' : pattern.charAt(pos);
+        }
+
+        void advance() {
+            pos++;
+        }
+
+        void expect(char c) {
+            if (current() != c) throw new RuntimeException("Expected " + c);
+            advance();
+        }
+
+        int readNumber() {
+            StringBuilder sb = new StringBuilder();
+            while (Character.isDigit(current())) {
+                sb.append(current());
+                advance();
+            }
+            return Integer.parseInt(sb.toString());
+        }
+    }
+
+    // =========================
+    // CONCAT HELPER
+    // =========================
+    static List<String> concat(List<String> left, List<String> right, int maxResults) {
+        List<String> result = new ArrayList<>();
+        for (String a : left) {
+            for (String b : right) {
+                result.add(a + b);
+                if (result.size() >= maxResults) return result;
             }
         }
         return result;
-    }
-
-    // L(M|N)O^3P*Q(2|3)
-    static List<String> generateR2() {
-        List<String> result = new ArrayList<>();
-
-        char[] mid = {'M', 'N'};
-        char[] last = {'2', '3'};
-
-        for (char m : mid) {
-            for (int p = 0; p <= MAX_REPEAT; p++) {
-                for (char l : last) {
-
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("L");
-                    sb.append(m);
-                    sb.append("O".repeat(3));
-                    sb.append("P".repeat(p));
-                    sb.append("Q");
-                    sb.append(l);
-
-                    result.add(sb.toString());
-                }
-            }
-        }
-        return result;
-    }
-
-    // R*S(T|U|V)W(X|Y|Z)^2
-    static List<String> generateR3() {
-        List<String> result = new ArrayList<>();
-
-        char[] middle = {'T', 'U', 'V'};
-        char[] xyz = {'X', 'Y', 'Z'};
-
-        for (int r = 0; r <= MAX_REPEAT; r++) {
-            for (char m : middle) {
-                for (char x : xyz) {
-                    for (char y : xyz) {
-
-                        StringBuilder sb = new StringBuilder();
-
-                        sb.append("R".repeat(r));
-                        sb.append("S");
-                        sb.append(m);
-                        sb.append("W");
-                        sb.append(x).append(y);
-
-                        result.add(sb.toString());
-                    }
-                }
-            }
-        }
-        return result;
-    }
-
-    static void explainR1() {
-        System.out.println("Processing steps:");
-        System.out.println("1. Choose one symbol from (S | T)");
-        System.out.println("2. Choose one symbol from (U | V)");
-        System.out.println("3. Repeat 'W' from 0 to " + MAX_REPEAT + " times (*)");
-        System.out.println("4. Repeat 'Y' from 1 to " + MAX_REPEAT + " times (+)");
-        System.out.println("5. Append constant '24'");
-        System.out.println("6. Combine all parts into final string\n");
-    }
-
-    static void explainR2() {
-        System.out.println("Processing steps:");
-        System.out.println("1. Start with 'L'");
-        System.out.println("2. Choose one symbol from (M | N)");
-        System.out.println("3. Append 'O' exactly 3 times (^3)");
-        System.out.println("4. Repeat 'P' from 0 to " + MAX_REPEAT + " times (*)");
-        System.out.println("5. Append 'Q'");
-        System.out.println("6. Choose one symbol from (2 | 3)");
-        System.out.println("7. Combine all parts into final string\n");
-    }
-
-    static void explainR3() {
-        System.out.println("Processing steps:");
-        System.out.println("1. Repeat 'R' from 0 to " + MAX_REPEAT + " times (*)");
-        System.out.println("2. Append 'S'");
-        System.out.println("3. Choose one symbol from (T | U | V)");
-        System.out.println("4. Append 'W'");
-        System.out.println("5. Choose two symbols from (X | Y | Z) (^2)");
-        System.out.println("6. Combine all parts into final string\n");
-    }
-
-    static void printSample(List<String> list) {
-        for (String s : list) {
-            System.out.println(s);
-        }
     }
 }
