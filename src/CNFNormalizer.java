@@ -1,352 +1,318 @@
 import java.util.*;
 
 public class CNFNormalizer {
+    static final String EPSILON = "eps";
 
-    private Set<String> nonTerminals;
-    private Set<String> terminals;
+    private Set<String> vn;
+    private Set<String> vt;
     private Map<String, List<List<String>>> productions;
-    private String startSymbol;
-    private int newSymbolCounter = 0;
+    private String start;
 
-    public CNFNormalizer(Set<String> nonTerminals, Set<String> terminals,
-                         Map<String, List<List<String>>> productions, String startSymbol) {
-        this.nonTerminals = new LinkedHashSet<>(nonTerminals);
-        this.terminals = new LinkedHashSet<>(terminals);
+    public CNFNormalizer(Set<String> vn, Set<String> vt, Map<String, List<List<String>>> productions, String start) {
+        this.vn = new LinkedHashSet<>(vn);
+        this.vt = new LinkedHashSet<>(vt);
         this.productions = deepCopy(productions);
-        this.startSymbol = startSymbol;
+        this.start = start;
     }
 
     private Map<String, List<List<String>>> deepCopy(Map<String, List<List<String>>> original) {
         Map<String, List<List<String>>> copy = new LinkedHashMap<>();
-        for (Map.Entry<String, List<List<String>>> e : original.entrySet()) {
+        for (String key : original.keySet()) {
             List<List<String>> rhsCopy = new ArrayList<>();
-            for (List<String> rhs : e.getValue()) {
+            for (List<String> rhs : original.get(key)) {
                 rhsCopy.add(new ArrayList<>(rhs));
             }
-            copy.put(e.getKey(), rhsCopy);
+            copy.put(key, rhsCopy);
         }
         return copy;
     }
 
-    private String newSymbol() {
-        String name = "X" + newSymbolCounter++;
-        nonTerminals.add(name);
-        return name;
+    public void printGrammar() {
+        System.out.println("V_N = " + vn);
+        System.out.println("V_T = " + vt);
+        System.out.println("P = {");
+        for (String head : productions.keySet()) {
+            System.out.print("  " + head + " -> ");
+            List<String> parts = new ArrayList<>();
+            for (List<String> rhs : productions.get(head)) {
+                parts.add(rhs.isEmpty() ? EPSILON : String.join("", rhs));
+            }
+            System.out.println(String.join(" | ", parts));
+        }
+        System.out.println("}");
     }
 
-    public void eliminateEpsilonProductions() {
-        System.out.println("\n1. Eliminate ε-productions");
-
+    public CNFNormalizer eliminateEpsilon() {
         Set<String> nullable = new HashSet<>();
         boolean changed = true;
         while (changed) {
             changed = false;
-            for (Map.Entry<String, List<List<String>>> e : productions.entrySet()) {
-                String lhs = e.getKey();
-                if (!nullable.contains(lhs)) {
-                    for (List<String> rhs : e.getValue()) {
-                        if (rhs.isEmpty() || (rhs.size() == 1 && rhs.get(0).equals("ε"))) {
-                            nullable.add(lhs);
-                            changed = true;
-                        } else if (nullable.containsAll(rhs)) {
-                            nullable.add(lhs);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-        System.out.println("Nullable symbols: " + nullable);
-
-        Map<String, List<List<String>>> newProductions = deepCopy(productions);
-        for (String lhs : productions.keySet()) {
-            List<List<String>> toAdd = new ArrayList<>();
-            for (List<String> rhs : productions.get(lhs)) {
-                List<List<String>> combinations = generateCombinations(rhs, nullable);
-                for (List<String> combo : combinations) {
-                    if (!combo.isEmpty() && !combo.equals(rhs) && !newProductions.get(lhs).contains(combo)) {
-                        toAdd.add(combo);
-                    }
-                }
-            }
-            newProductions.get(lhs).addAll(toAdd);
-        }
-
-        for (String lhs : newProductions.keySet()) {
-            newProductions.get(lhs).removeIf(rhs -> rhs.isEmpty() ||
-                    (rhs.size() == 1 && rhs.get(0).equals("ε")));
-        }
-
-        productions = newProductions;
-        System.out.println("After elimination:");
-        printProductions();
-    }
-
-    private List<List<String>> generateCombinations(List<String> rhs, Set<String> nullable) {
-        List<List<String>> result = new ArrayList<>();
-        result.add(new ArrayList<>());
-        for (String symbol : rhs) {
-            List<List<String>> newResult = new ArrayList<>();
-            for (List<String> existing : result) {
-                List<String> withSymbol = new ArrayList<>(existing);
-                withSymbol.add(symbol);
-                newResult.add(withSymbol);
-                if (nullable.contains(symbol)) {
-                    newResult.add(new ArrayList<>(existing));
-                }
-            }
-            result = newResult;
-        }
-        return result;
-    }
-
-    public void eliminateRenamings() {
-        System.out.println("\n2. Eliminate renamings (unit productions)");
-
-        boolean changed = true;
-        while (changed) {
-            changed = false;
-            Map<String, List<List<String>>> newProductions = deepCopy(productions);
-            for (String lhs : productions.keySet()) {
-                List<List<String>> toAdd = new ArrayList<>();
-                List<List<String>> toRemove = new ArrayList<>();
-                for (List<String> rhs : productions.get(lhs)) {
-                    if (rhs.size() == 1 && nonTerminals.contains(rhs.get(0))) {
-                        String target = rhs.get(0);
-                        toRemove.add(rhs);
-                        if (productions.containsKey(target)) {
-                            for (List<String> targetRhs : productions.get(target)) {
-                                if (!newProductions.get(lhs).contains(targetRhs) && !toAdd.contains(targetRhs)) {
-                                    toAdd.add(new ArrayList<>(targetRhs));
-                                }
-                            }
-                        }
-                        changed = true;
-                    }
-                }
-                newProductions.get(lhs).removeAll(toRemove);
-                newProductions.get(lhs).addAll(toAdd);
-            }
-            productions = newProductions;
-        }
-
-        System.out.println("After elimination:");
-        printProductions();
-    }
-
-    public void eliminateInaccessibleSymbols() {
-        System.out.println("\n3. Eliminate inaccessible symbols");
-
-        Set<String> accessible = new HashSet<>();
-        accessible.add(startSymbol);
-        boolean changed = true;
-        while (changed) {
-            changed = false;
-            Set<String> toAdd = new HashSet<>();
-            for (String sym : accessible) {
-                if (productions.containsKey(sym)) {
-                    for (List<String> rhs : productions.get(sym)) {
-                        for (String s : rhs) {
-                            if (!accessible.contains(s)) {
-                                toAdd.add(s);
-                                changed = true;
-                            }
-                        }
-                    }
-                }
-            }
-            accessible.addAll(toAdd);
-        }
-
-        System.out.println("Accessible symbols: " + accessible);
-        Set<String> inaccessible = new HashSet<>(nonTerminals);
-        inaccessible.removeAll(accessible);
-        System.out.println("Inaccessible (removed): " + inaccessible);
-
-        nonTerminals.retainAll(accessible);
-        productions.keySet().retainAll(accessible);
-
-        System.out.println("After elimination:");
-        printProductions();
-    }
-
-    public void eliminateNonProductiveSymbols() {
-        System.out.println("\n4. Eliminate non-productive symbols");
-
-        Set<String> productive = new HashSet<>(terminals);
-        boolean changed = true;
-        while (changed) {
-            changed = false;
-            for (Map.Entry<String, List<List<String>>> e : productions.entrySet()) {
-                if (!productive.contains(e.getKey())) {
-                    for (List<String> rhs : e.getValue()) {
-                        if (productive.containsAll(rhs)) {
-                            productive.add(e.getKey());
-                            changed = true;
+            for (String head : productions.keySet()) {
+                if (nullable.contains(head)) continue;
+                for (List<String> rhs : productions.get(head)) {
+                    boolean allNullable = true;
+                    for (String s : rhs) {
+                        if (!nullable.contains(s)) {
+                            allNullable = false;
                             break;
                         }
                     }
-                }
-            }
-        }
-
-        Set<String> nonProductive = new HashSet<>(nonTerminals);
-        nonProductive.removeAll(productive);
-        System.out.println("Productive symbols: " + productive);
-        System.out.println("Non-productive (removed): " + nonProductive);
-
-        nonTerminals.retainAll(productive);
-        productions.keySet().retainAll(productive);
-        for (String lhs : new ArrayList<>(productions.keySet())) {
-            productions.get(lhs).removeIf(rhs -> {
-                for (String sym : rhs) {
-                    if (!productive.contains(sym)) return true;
-                }
-                return false;
-            });
-        }
-
-        System.out.println("After elimination:");
-        printProductions();
-    }
-
-    public void convertToCNF() {
-        System.out.println("\n5. Convert to Chomsky Normal Form");
-
-        Map<String, String> terminalMap = new HashMap<>();
-        Map<String, List<List<String>>> newProductions = deepCopy(productions);
-
-        for (String lhs : productions.keySet()) {
-            List<List<String>> updatedRules = new ArrayList<>();
-            for (List<String> rhs : productions.get(lhs)) {
-                if (rhs.size() >= 2) {
-                    List<String> newRhs = new ArrayList<>();
-                    for (String sym : rhs) {
-                        if (terminals.contains(sym)) {
-                            if (!terminalMap.containsKey(sym)) {
-                                String newNT = newSymbol();
-                                terminalMap.put(sym, newNT);
-                                newProductions.put(newNT, new ArrayList<>(
-                                        Collections.singletonList(Collections.singletonList(sym))));
-                            }
-                            newRhs.add(terminalMap.get(sym));
-                        } else {
-                            newRhs.add(sym);
-                        }
+                    if (rhs.isEmpty() || allNullable) {
+                        nullable.add(head);
+                        changed = true;
+                        break;
                     }
-                    updatedRules.add(newRhs);
-                } else {
-                    updatedRules.add(new ArrayList<>(rhs));
                 }
             }
-            newProductions.put(lhs, updatedRules);
+        }
+
+        Map<String, List<List<String>>> newProductions = new LinkedHashMap<>();
+        for (String head : vn) newProductions.put(head, new ArrayList<>());
+        for (String head : productions.keySet()) {
+            for (List<String> rhs : productions.get(head)) {
+                if (rhs.isEmpty()) continue;
+                Set<List<String>> expansions = nullableExpansions(rhs, nullable);
+                for (List<String> option : expansions) {
+                    if ((!option.isEmpty() || head.equals(start)) && !newProductions.get(head).contains(option)) {
+                        newProductions.get(head).add(option);
+                    }
+                }
+            }
+        }
+        if (nullable.contains(start) && !newProductions.get(start).contains(new ArrayList<>())) {
+            newProductions.get(start).add(new ArrayList<>());
         }
         productions = newProductions;
+        return this;
+    }
 
-        Map<String, List<List<String>>> finalProductions = new LinkedHashMap<>();
-        for (String lhs : productions.keySet()) {
-            finalProductions.put(lhs, new ArrayList<>());
+    private Set<List<String>> nullableExpansions(List<String> rhs, Set<String> nullable) {
+        Set<List<String>> results = new HashSet<>();
+        backtrackNullable(rhs, nullable, 0, new ArrayList<>(), results);
+        return results;
+    }
+
+    private void backtrackNullable(List<String> rhs, Set<String> nullable, int index, List<String> current, Set<List<String>> results) {
+        if (index == rhs.size()) {
+            results.add(new ArrayList<>(current));
+            return;
         }
+        String symbol = rhs.get(index);
+        if (nullable.contains(symbol)) {
+            backtrackNullable(rhs, nullable, index + 1, current, results);
+        }
+        current.add(symbol);
+        backtrackNullable(rhs, nullable, index + 1, current, results);
+        current.remove(current.size() - 1);
+    }
 
-        for (String lhs : productions.keySet()) {
-            for (List<String> rhs : productions.get(lhs)) {
-                if (rhs.size() <= 2) {
-                    finalProductions.get(lhs).add(new ArrayList<>(rhs));
-                } else {
-                    String current = lhs;
-                    List<String> remaining = new ArrayList<>(rhs);
-                    while (remaining.size() > 2) {
-                        String newNT = newSymbol();
-                        if (!finalProductions.containsKey(newNT)) {
-                            finalProductions.put(newNT, new ArrayList<>());
-                        }
-                        List<String> newRule = new ArrayList<>();
-                        newRule.add(remaining.get(0));
-                        newRule.add(newNT);
-                        if (!finalProductions.containsKey(current)) {
-                            finalProductions.put(current, new ArrayList<>());
-                        }
-                        finalProductions.get(current).add(newRule);
-                        remaining = remaining.subList(1, remaining.size());
-                        current = newNT;
+    public CNFNormalizer eliminateUnit() {
+        Map<String, Set<String>> closure = new LinkedHashMap<>();
+        for (String nt : vn) closure.put(nt, unitClosure(nt));
+
+        Map<String, List<List<String>>> newProductions = new LinkedHashMap<>();
+        for (String head : vn) {
+            newProductions.put(head, new ArrayList<>());
+            for (String target : closure.get(head)) {
+                for (List<String> rhs : productions.getOrDefault(target, new ArrayList<>())) {
+                    if (rhs.size() == 1 && vn.contains(rhs.get(0))) continue;
+                    if (!newProductions.get(head).contains(rhs)) {
+                        newProductions.get(head).add(new ArrayList<>(rhs));
                     }
-                    finalProductions.get(current).add(new ArrayList<>(remaining));
                 }
             }
         }
-        productions = finalProductions;
-        nonTerminals.addAll(productions.keySet());
-
-        System.out.println("After CNF conversion:");
-        printProductions();
-        System.out.println("\nGrammar is now in Chomsky Normal Form");
+        productions = newProductions;
+        return this;
     }
 
-    public void printProductions() {
-        for (String lhs : productions.keySet()) {
-            List<List<String>> rules = productions.get(lhs);
-            if (rules.isEmpty()) continue;
-            System.out.print("  " + lhs + " -> ");
-            List<String> rhsStrings = new ArrayList<>();
-            for (List<String> rhs : rules) {
-                rhsStrings.add(String.join(" ", rhs));
+    private Set<String> unitClosure(String startNt) {
+        Set<String> closure = new HashSet<>();
+        Stack<String> stack = new Stack<>();
+        closure.add(startNt);
+        stack.push(startNt);
+        while (!stack.isEmpty()) {
+            String head = stack.pop();
+            for (List<String> rhs : productions.getOrDefault(head, new ArrayList<>())) {
+                if (rhs.size() == 1 && vn.contains(rhs.get(0))) {
+                    String target = rhs.get(0);
+                    if (!closure.contains(target)) {
+                        closure.add(target);
+                        stack.push(target);
+                    }
+                }
             }
-            System.out.println(String.join(" | ", rhsStrings));
+        }
+        return closure;
+    }
+
+    public CNFNormalizer eliminateInaccessible() {
+        Set<String> reachable = new HashSet<>();
+        reachable.add(start);
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (String head : new HashSet<>(reachable)) {
+                for (List<String> rhs : productions.getOrDefault(head, new ArrayList<>())) {
+                    for (String symbol : rhs) {
+                        if (vn.contains(symbol) && !reachable.contains(symbol)) {
+                            reachable.add(symbol);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        vn.retainAll(reachable);
+        productions.keySet().retainAll(reachable);
+        return this;
+    }
+
+    public CNFNormalizer eliminateNonproductive() {
+        Set<String> productive = new HashSet<>();
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (String head : productions.keySet()) {
+                if (productive.contains(head)) continue;
+                for (List<String> rhs : productions.get(head)) {
+                    boolean ok = true;
+                    for (String s : rhs) {
+                        if (!(vt.contains(s) || productive.contains(s))) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (ok) {
+                        productive.add(head);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        vn.retainAll(productive);
+        Map<String, List<List<String>>> newProductions = new LinkedHashMap<>();
+        for (String head : vn) {
+            List<List<String>> filtered = new ArrayList<>();
+            for (List<String> rhs : productions.getOrDefault(head, new ArrayList<>())) {
+                boolean ok = true;
+                for (String s : rhs) {
+                    if (!(vt.contains(s) || vn.contains(s))) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) filtered.add(rhs);
+            }
+            newProductions.put(head, filtered);
+        }
+        productions = newProductions;
+        return this;
+    }
+
+    private int counter = 0;
+    private String fresh(String prefix) {
+        String candidate = prefix;
+        while (vn.contains(candidate)) candidate = prefix + (++counter);
+        vn.add(candidate);
+        return candidate;
+    }
+
+    public CNFNormalizer toCNF() {
+        Map<String, String> terminalMap = new HashMap<>();
+        Map<String, List<List<String>>> temp = new LinkedHashMap<>();
+        for (String nt : vn) temp.put(nt, new ArrayList<>());
+
+        for (String head : productions.keySet()) {
+            for (List<String> rhs : productions.get(head)) {
+                if (rhs.size() <= 1) {
+                    temp.get(head).add(new ArrayList<>(rhs));
+                    continue;
+                }
+                List<String> replaced = new ArrayList<>();
+                for (String symbol : rhs) {
+                    if (vt.contains(symbol)) {
+                        if (!terminalMap.containsKey(symbol)) {
+                            String nt = fresh("T_" + symbol);
+                            terminalMap.put(symbol, nt);
+                            temp.put(nt, new ArrayList<>());
+                            temp.get(nt).add(Arrays.asList(symbol));
+                        }
+                        replaced.add(terminalMap.get(symbol));
+                    } else replaced.add(symbol);
+                }
+                temp.get(head).add(replaced);
+            }
+        }
+
+        Map<String, List<List<String>>> finalP = new LinkedHashMap<>();
+        for (String nt : vn) finalP.put(nt, new ArrayList<>());
+        for (String head : temp.keySet()) {
+            for (List<String> rhs : temp.get(head)) {
+                if (rhs.size() <= 2) {
+                    finalP.get(head).add(new ArrayList<>(rhs));
+                    continue;
+                }
+                String current = head;
+                List<String> symbols = new ArrayList<>(rhs);
+                while (symbols.size() > 2) {
+                    String first = symbols.remove(0);
+                    String next = fresh("X");
+                    finalP.get(current).add(Arrays.asList(first, next));
+                    current = next;
+                }
+                finalP.get(current).add(new ArrayList<>(symbols));
+            }
+        }
+        productions = finalP;
+        return this;
+    }
+
+    public void validateCNF() {
+        List<String> issues = new ArrayList<>();
+        for (String head : productions.keySet()) {
+            for (List<String> rhs : productions.get(head)) {
+                if (rhs.isEmpty()) {
+                    if (!head.equals(start)) issues.add("Invalid epsilon: " + head);
+                    continue;
+                }
+                if (rhs.size() == 1) {
+                    if (!vt.contains(rhs.get(0))) issues.add("Invalid unit: " + head + " -> " + rhs);
+                } else if (rhs.size() == 2) {
+                    if (!(vn.contains(rhs.get(0)) && vn.contains(rhs.get(1)))) issues.add("Binary rule must be NTs: " + head + " -> " + rhs);
+                } else issues.add("Rule too long: " + head + " -> " + rhs);
+            }
+        }
+        if (issues.isEmpty()) System.out.println("\nCNF validation passed.");
+        else {
+            System.out.println("\nCNF validation failed:");
+            for (String issue : issues) System.out.println(" - " + issue);
         }
     }
 
-    public void normalize() {
-        System.out.println("CNF NORMALIZATION - VARIANT 24");
-        System.out.println("Initial grammar G=(V_N, V_T, P, S)");
-        System.out.println("V_N = " + nonTerminals);
-        System.out.println("V_T = " + terminals);
-        System.out.println("S = " + startSymbol);
-        System.out.println("Initial productions:");
-        printProductions();
-
-        eliminateEpsilonProductions();
-        eliminateRenamings();
-        eliminateInaccessibleSymbols();
-        eliminateNonProductiveSymbols();
-        convertToCNF();
-
-        System.out.println("FINAL CNF GRAMMAR");
-        System.out.println("V_N = " + nonTerminals);
-        System.out.println("V_T = " + terminals);
-        System.out.println("S = " + startSymbol);
-        printProductions();
-    }
-
-    public static CNFNormalizer createVariant24() {
-        Set<String> vn = new LinkedHashSet<>(Arrays.asList("S", "A", "B", "C"));
-        Set<String> vt = new LinkedHashSet<>(Arrays.asList("a", "d"));
-
+    public static CNFNormalizer createVariant20() {
+        Set<String> vn = new LinkedHashSet<>(Arrays.asList("S", "A", "B", "C", "D"));
+        Set<String> vt = new LinkedHashSet<>(Arrays.asList("a", "b"));
         Map<String, List<List<String>>> p = new LinkedHashMap<>();
-
-        p.put("S", Arrays.asList(
-                Arrays.asList("d", "B"),
-                Arrays.asList("A")
-        ));
-        p.put("A", Arrays.asList(
-                Arrays.asList("d"),
-                Arrays.asList("d", "S"),
-                Arrays.asList("a", "B", "d", "A", "B")
-        ));
-        p.put("B", Arrays.asList(
-                Arrays.asList("a"),
-                Arrays.asList("d", "A"),
-                Arrays.asList("A"),
-                Collections.singletonList("ε")
-        ));
-        p.put("C", Arrays.asList(
-                Arrays.asList("A", "a")
-        ));
-
+        p.put("S", Arrays.asList(Arrays.asList("a", "B"), Arrays.asList("b", "A"), Arrays.asList("A")));
+        p.put("A", Arrays.asList(Arrays.asList("B"), Arrays.asList("S", "a"), Arrays.asList("b", "B", "A"), Arrays.asList("b")));
+        p.put("B", Arrays.asList(Arrays.asList("b"), Arrays.asList("b", "S"), Arrays.asList("a", "D"), new ArrayList<>()));
+        p.put("D", Arrays.asList(Arrays.asList("A", "A")));
+        p.put("C", Arrays.asList(Arrays.asList("B", "a")));
         return new CNFNormalizer(vn, vt, p, "S");
     }
 
     public static void main(String[] args) {
-        CNFNormalizer normalizer = createVariant24();
-        normalizer.normalize();
+        System.out.println("Lab 5: Chomsky Normal Form");
+        CNFNormalizer g = createVariant20();
+        System.out.println("\nOriginal Grammar");
+        g.printGrammar();
+
+        g.eliminateEpsilon().eliminateUnit().eliminateInaccessible().eliminateNonproductive().toCNF();
+
+        System.out.println("\nChomsky Normal Form");
+        g.printGrammar();
+        g.validateCNF();
     }
 }
